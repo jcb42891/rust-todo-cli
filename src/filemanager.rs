@@ -6,11 +6,12 @@ use std::io::{self, BufRead, BufReader};
 use std::fs;
 use std::path::Path;
 
-const FILE_PATH: &str  = "tasks.txt";
+const TASKS_FILE_PATH: &str  = "tasks.txt";
 const CURRENT_ID_FILE_PATH: &str = "id.txt";
+const TEMP_FILE: &str = "temp.txt";
 
 pub fn write_task_to_file(description: &str) -> Result<(), io::Error> {
-  let mut tasks_file: fs::File = get_file_handle_for_write();
+  let mut tasks_file: fs::File = get_file_handle_for_write(TASKS_FILE_PATH, true);
 
   let current_id: u64 = match get_current_id() {
     Ok(id) => id,
@@ -21,11 +22,6 @@ pub fn write_task_to_file(description: &str) -> Result<(), io::Error> {
   };
   update_current_id(current_id+1);
 
-  // if let Err(e) = writeln!(tasks_file, "ID={};Description={}", current_id+1, description) {
-  //   eprintln!("Couldn't write to the file: {}", e);
-  //   process::exit(1);
-  // }
-
   writeln!(tasks_file, "ID={};Description={}", current_id+1, description).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
   Ok(())
 }
@@ -33,7 +29,7 @@ pub fn write_task_to_file(description: &str) -> Result<(), io::Error> {
 pub fn get_all_tasks_from_file() -> Result<Vec<Task>, io::Error> {
  println!("Listing all tasks!");
 
- let file = fs::File::open(FILE_PATH);
+ let file = fs::File::open(TASKS_FILE_PATH);
  let reader = BufReader::new(file?);
  let mut tasks = Vec::new();
 
@@ -46,7 +42,7 @@ pub fn get_all_tasks_from_file() -> Result<Vec<Task>, io::Error> {
 }
 
 pub fn remove_task_by_id_from_file(id: u64) -> Result<bool, io::Error> {
-  let file = fs::File::open(FILE_PATH);
+  let file = fs::File::open(TASKS_FILE_PATH);
   let reader = BufReader::new(file?);
   let mut lines_cache: Vec<String> = Vec::new();
   let mut retval = false;
@@ -64,15 +60,24 @@ pub fn remove_task_by_id_from_file(id: u64) -> Result<bool, io::Error> {
       lines_cache.push(line);
     }
   }
-  // First remove the file
-  let _ = fs::remove_file(FILE_PATH);
-
-  let mut tasks_file: fs::File = get_file_handle_for_write();
+  // First copy the existing task file to a tmp file
+  fs::copy(TASKS_FILE_PATH, TEMP_FILE)?;
+  // Next remove the tasks file
+  let _ = fs::remove_file(TASKS_FILE_PATH);
+  // Rebuild the tasks file
+  let mut tasks_file: fs::File = get_file_handle_for_write(TASKS_FILE_PATH, true);
   for line in lines_cache {
-    if let Err(e) = writeln!(tasks_file, "{line}") {
-      eprintln!("Couldn't write to the file during task removal: {}", e);
-      process::exit(1);
-    }
+    writeln!(tasks_file, "{line}").map_err(|e| {
+      // If there's an error, we should roll back to the tmp file.
+      let _ = fs::copy(TEMP_FILE, TASKS_FILE_PATH);
+      io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "There was a problem adding a new task, reverted back to original tasks list. Error: {}",
+            e
+        )
+    )
+    })?;
   }
 
   Ok(retval)
@@ -94,12 +99,7 @@ fn get_current_id() -> Result<u64, String>  {
 }
 
 fn update_current_id(id: u64) {
-  let mut id_file = OpenOptions::new()
-  .write(true)
-  .append(false)
-  .create(true)
-  .open(CURRENT_ID_FILE_PATH)
-  .unwrap();
+  let mut id_file = get_file_handle_for_write(CURRENT_ID_FILE_PATH, false);
 
   if let Err(e) = writeln!(id_file, "{}", id) {
     eprintln!("Couldn't write to the ID file: {}. Terminating.", e);
@@ -121,11 +121,11 @@ fn parse_line(line: &str) -> Result<Task, String> {
   )
 }
 
-fn get_file_handle_for_write() -> std::fs::File {
+fn get_file_handle_for_write(file_path: &str, should_append: bool) -> std::fs::File {
   OpenOptions::new()
     .write(true)
-    .append(true)
+    .append(should_append)
     .create(true)
-    .open(FILE_PATH)
+    .open(file_path)
     .unwrap()
 }

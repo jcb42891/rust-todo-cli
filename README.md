@@ -1,7 +1,7 @@
 # A simple todo list app for the CLI
 
 ```
-Usage: todo_cli.exe [COMMAND]
+Usage: cargo run -- <COMMAND> <ARGS>
 ```
 
 ### Commands:

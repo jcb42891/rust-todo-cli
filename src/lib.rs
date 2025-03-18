@@ -1,4 +1,4 @@
 pub mod cmdparser;
 pub mod taskmanager;
-pub mod filemanager;
+mod filemanager;
 pub use cmdparser::Args;

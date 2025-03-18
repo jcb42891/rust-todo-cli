@@ -8,14 +8,17 @@ fn main() {
 
   match args.command {
     Some(Commands::Add { description }) => {
-      taskmanager::add_task(&description);
+      let _ = taskmanager::add_task(&description);
     },
     Some(Commands::List {  }) => {
-      taskmanager::list_tasks();
+      let _ = taskmanager::list_tasks();
     },
     Some(Commands::Remove { task_id }) => {
-      taskmanager::remove_task(task_id);
+      let _ = taskmanager::remove_task(task_id);
     },
-    None => println!("Provided command not supported")
+    None => {
+      Args::parse_from(&["todo_cli", "--help"]);
+      std::process::exit(1);
+    }
   }
 }

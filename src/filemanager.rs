@@ -2,21 +2,17 @@ use crate::taskmanager::Task;
 use std::process;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::io::{self, BufRead, BufReader};
 use std::fs;
 use std::path::Path;
 
 const FILE_PATH: &str  = "tasks.txt";
 const CURRENT_ID_FILE_PATH: &str = "id.txt";
 
-pub fn write_task_to_file(description: &str) {
-  let mut tasks_file = OpenOptions::new()
-    .write(true)
-    .append(true)
-    .create(true)
-    .open(FILE_PATH)
-    .unwrap();
+pub fn write_task_to_file(description: &str) -> Result<(), io::Error> {
+  let mut tasks_file: fs::File = get_file_handle_for_write();
 
-  let current_id = match get_current_id() {
+  let current_id: u64 = match get_current_id() {
     Ok(id) => id,
     Err(e) => {
       eprintln!("{e}");
@@ -25,34 +21,42 @@ pub fn write_task_to_file(description: &str) {
   };
   update_current_id(current_id+1);
 
-  if let Err(e) = writeln!(tasks_file, "ID={};Description={}", current_id+1, description) {
-    eprintln!("Couldn't write to the file: {}", e);
-    process::exit(1);
-  }
+  // if let Err(e) = writeln!(tasks_file, "ID={};Description={}", current_id+1, description) {
+  //   eprintln!("Couldn't write to the file: {}", e);
+  //   process::exit(1);
+  // }
+
+  writeln!(tasks_file, "ID={};Description={}", current_id+1, description).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+  Ok(())
 }
 
-pub fn get_all_tasks_from_file() -> Vec<Task> {
+pub fn get_all_tasks_from_file() -> Result<Vec<Task>, io::Error> {
  println!("Listing all tasks!");
- 
- let contents = fs::read_to_string(FILE_PATH).unwrap_or_default();
- dbg!(&contents);
- let mut tasks: Vec<Task> = Vec::new();
- for line in contents.lines() {
-  let parsed_task = parse_line(line);
-  tasks.push(Task {id: parsed_task.0, description: parsed_task.1 });
+
+ let file = fs::File::open(FILE_PATH);
+ let reader = BufReader::new(file?);
+ let mut tasks = Vec::new();
+
+ for line in reader.lines() {
+  let line = line?;
+  let task = parse_line(&line).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+  tasks.push(task);
  }
- tasks
+ Ok(tasks)
 }
 
-pub fn remove_task_by_id_from_file(id: u64) -> bool {
-  let contents = fs::read_to_string(FILE_PATH).unwrap_or_default();
-  let mut lines_cache: Vec<&str> = Vec::new();
+pub fn remove_task_by_id_from_file(id: u64) -> Result<bool, io::Error> {
+  let file = fs::File::open(FILE_PATH);
+  let reader = BufReader::new(file?);
+  let mut lines_cache: Vec<String> = Vec::new();
   let mut retval = false;
 
-  for line in contents.lines() {
-    let parsed_task: (u64, String) = parse_line(line);
+  for line in reader.lines() {
+    let line = line?;
+    let line_clone = line.clone();
+    let parsed_task: Task = parse_line(&line_clone).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    if parsed_task.0 == id {
+    if parsed_task.id == id {
       // This means we need to delete this line, so do not cache it
       retval = true;
     } else {
@@ -63,13 +67,7 @@ pub fn remove_task_by_id_from_file(id: u64) -> bool {
   // First remove the file
   let _ = fs::remove_file(FILE_PATH);
 
-  let mut tasks_file = OpenOptions::new()
-  .write(true)
-  .append(true)
-  .create(true)
-  .open(FILE_PATH)
-  .unwrap();
-
+  let mut tasks_file: fs::File = get_file_handle_for_write();
   for line in lines_cache {
     if let Err(e) = writeln!(tasks_file, "{line}") {
       eprintln!("Couldn't write to the file during task removal: {}", e);
@@ -77,7 +75,7 @@ pub fn remove_task_by_id_from_file(id: u64) -> bool {
     }
   }
 
-  return retval;
+  Ok(retval)
 }
 
 fn get_current_id() -> Result<u64, String>  {
@@ -109,14 +107,25 @@ fn update_current_id(id: u64) {
   }
 }
 
-fn parse_line(line: &str) -> (u64, String) {
+fn parse_line(line: &str) -> Result<Task, String> {
   let split_task: Vec<&str> = line.split(';').collect();
-  let id_part = split_task[0];
-  let desc_part = split_task[1];
+  if split_task.len() != 2 {
+    return Err("Invalid task format".to_string());
+  }
+  let id_part = split_task[0].split('=').nth(1).ok_or("Missing ID")?;
+  let desc_part = split_task[1].split('=').nth(1).ok_or("Missing description")?;
+  let id = id_part.parse::<u64>().map_err(|_| "Invalid ID")?;
 
-  let id_str: &str = id_part.split('=').collect::<Vec<&str>>()[1];
-  let desc_str: &str = desc_part.split('=').collect::<Vec<&str>>()[1];
-
-  (id_str.parse::<u64>().expect("Could not parse ID from tasks file, file is likely corrupted!!"), desc_str.to_string())
+  Ok(
+    Task { id: id, description: desc_part.to_string()}
+  )
 }
 
+fn get_file_handle_for_write() -> std::fs::File {
+  OpenOptions::new()
+    .write(true)
+    .append(true)
+    .create(true)
+    .open(FILE_PATH)
+    .unwrap()
+}
